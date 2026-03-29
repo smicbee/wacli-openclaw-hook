@@ -11,6 +11,11 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+try:
+    import fcntl
+except Exception:  # pragma: no cover
+    fcntl = None
+
 
 DEFAULT_CONFIG = {
     "wacli_bin": "wacli",
@@ -46,11 +51,12 @@ DEFAULT_CONFIG = {
 
 
 STOP = False
+_LOCK_HANDLE = None
 
 
 def log(msg: str) -> None:
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] {msg}")
+    print(f"[{now}] {msg}", flush=True)
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -318,6 +324,42 @@ def handle_signal(signum, frame):
     log(f"Signal {signum} empfangen, beende nach aktuellem Durchlauf...")
 
 
+def acquire_singleton_lock(state_path: Path, once: bool = False) -> None:
+    global _LOCK_HANDLE
+    if fcntl is None:
+        return
+    lock_path = state_path.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(lock_path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        mode = "once" if once else "loop"
+        raise RuntimeError(f"another wacli_hook.py instance is already running (mode={mode}, lock={lock_path})")
+
+    handle.seek(0)
+    handle.truncate(0)
+    handle.write(f"pid={os.getpid()}\n")
+    handle.write(f"started_at={iso_now_utc()}\n")
+    handle.flush()
+    _LOCK_HANDLE = handle
+
+
+def release_singleton_lock() -> None:
+    global _LOCK_HANDLE
+    if _LOCK_HANDLE is None or fcntl is None:
+        return
+    try:
+        fcntl.flock(_LOCK_HANDLE.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        _LOCK_HANDLE.close()
+    except Exception:
+        pass
+    _LOCK_HANDLE = None
+
+
 def run_loop(cfg: Dict[str, Any], once: bool = False) -> int:
     state_path = Path(os.path.expanduser(cfg.get("state_file", "~/.wacli-hook/state.json")))
     state = load_json(state_path, {})
@@ -329,55 +371,67 @@ def run_loop(cfg: Dict[str, Any], once: bool = False) -> int:
         start = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=int(cfg.get("lookback_minutes_on_boot", 15)))
         state["last_check_iso"] = start.replace(microsecond=0).isoformat()
 
+    acquire_singleton_lock(state_path, once=once)
+
     ttl_hours = int(cfg.get("dedupe", {}).get("processed_id_ttl_hours", 168))
 
-    while True:
-        cycle_start = iso_now_utc()
-        try:
-            run_sync_once(cfg)
-            after_iso = state.get("last_check_iso", cycle_start)
-            messages = fetch_messages_since(cfg, after_iso)
+    try:
+        while True:
+            cycle_start = iso_now_utc()
+            state["last_cycle_started_iso"] = cycle_start
+            save_json(state_path, state)
+            log(f"Cycle start (pid={os.getpid()}, after={state.get('last_check_iso')})")
+            try:
+                run_sync_once(cfg)
+                after_iso = state.get("last_check_iso", cycle_start)
+                messages = fetch_messages_since(cfg, after_iso)
 
-            handled = 0
-            for msg in messages:
-                # advance watermark eagerly to avoid reprocessing storms
-                ts = msg.get("Timestamp")
-                if ts:
+                handled = 0
+                for msg in messages:
+                    # advance watermark eagerly to avoid reprocessing storms
+                    ts = msg.get("Timestamp")
+                    if ts:
+                        try:
+                            state["last_check_iso"] = normalize_ts(ts)
+                        except Exception:
+                            pass
+
+                    if not should_process_message(cfg, msg, state):
+                        continue
+
+                    chat_jid = msg["ChatJID"]
+                    incoming_text = (msg.get("Text") or "").strip()
+                    log(f"Trigger in {chat_jid}: {incoming_text[:80]}")
+
                     try:
-                        state["last_check_iso"] = normalize_ts(ts)
-                    except Exception:
-                        pass
+                        reply = call_openclaw(cfg, chat_jid, msg)
+                        if cfg.get("dry_run", True):
+                            log(f"DRY-RUN reply -> {chat_jid}: {reply[:160]}")
+                        else:
+                            send_reply(cfg, chat_jid, reply)
+                            log(f"Antwort gesendet -> {chat_jid}")
+                        mark_processed(state, msg)
+                        handled += 1
+                    except Exception as e:
+                        log(f"Antwort fehlgeschlagen für {chat_jid}: {e}")
 
-                if not should_process_message(cfg, msg, state):
-                    continue
+                state["last_cycle_finished_iso"] = iso_now_utc()
+                state["last_error"] = None
+                state["last_check_iso"] = cycle_start
+                prune_processed(state, ttl_hours)
+                save_json(state_path, state)
+                log(f"Durchlauf fertig: {len(messages)} Nachrichten geprüft, {handled} verarbeitet.")
+            except Exception as e:
+                state["last_cycle_finished_iso"] = iso_now_utc()
+                state["last_error"] = str(e)
+                log(f"Durchlauf-Fehler: {e}")
+                save_json(state_path, state)
 
-                chat_jid = msg["ChatJID"]
-                incoming_text = (msg.get("Text") or "").strip()
-                log(f"Trigger in {chat_jid}: {incoming_text[:80]}")
-
-                try:
-                    reply = call_openclaw(cfg, chat_jid, msg)
-                    if cfg.get("dry_run", True):
-                        log(f"DRY-RUN reply -> {chat_jid}: {reply[:160]}")
-                    else:
-                        send_reply(cfg, chat_jid, reply)
-                        log(f"Antwort gesendet -> {chat_jid}")
-                    mark_processed(state, msg)
-                    handled += 1
-                except Exception as e:
-                    log(f"Antwort fehlgeschlagen für {chat_jid}: {e}")
-
-            state["last_check_iso"] = cycle_start
-            prune_processed(state, ttl_hours)
-            save_json(state_path, state)
-            log(f"Durchlauf fertig: {len(messages)} Nachrichten geprüft, {handled} verarbeitet.")
-        except Exception as e:
-            log(f"Durchlauf-Fehler: {e}")
-            save_json(state_path, state)
-
-        if once or STOP:
-            return 0
-        time.sleep(int(cfg.get("poll_interval_seconds", 45)))
+            if once or STOP:
+                return 0
+            time.sleep(int(cfg.get("poll_interval_seconds", 45)))
+    finally:
+        release_singleton_lock()
 
 
 def load_config(path: Path) -> Dict[str, Any]:
@@ -412,7 +466,11 @@ def main() -> int:
     signal.signal(signal.SIGTERM, handle_signal)
 
     log(f"Starte wacli-hook (dry_run={cfg.get('dry_run', True)})")
-    return run_loop(cfg, once=args.once)
+    try:
+        return run_loop(cfg, once=args.once)
+    except RuntimeError as e:
+        log(f"Startup-Fehler: {e}")
+        return 1
 
 
 if __name__ == "__main__":
