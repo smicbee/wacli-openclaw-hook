@@ -15,7 +15,7 @@ The runner executes a serialized loop:
 3. apply trigger and chat filters
 4. generate a response using `openclaw agent`
 5. send the response using `wacli send text`
-6. persist state for dedupe and restart safety
+6. persist state for dedupe and restart safety (composite key: `ChatJID::MsgID`)
 
 This avoids common lock conflicts from running long-lived `wacli sync --follow` in parallel with separate send commands.
 

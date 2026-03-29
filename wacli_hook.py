@@ -267,13 +267,28 @@ def prune_processed(state: Dict[str, Any], ttl_hours: int) -> None:
     state["processed_ids"] = keep
 
 
+def dedupe_key(msg: Dict[str, Any]) -> str:
+    chat_jid = (msg.get("ChatJID") or "").strip().lower()
+    msg_id = (msg.get("MsgID") or "").strip()
+    if not chat_jid or not msg_id:
+        return ""
+    return f"{chat_jid}::{msg_id}"
+
+
 def should_process_message(cfg: Dict[str, Any], msg: Dict[str, Any], state: Dict[str, Any]) -> bool:
     if msg.get("FromMe", False):
         return False
     msg_id = msg.get("MsgID", "")
     if not msg_id:
         return False
-    if msg_id in state.get("processed_ids", {}):
+    key = dedupe_key(msg)
+    if not key:
+        return False
+    processed_ids = state.get("processed_ids", {})
+    if key in processed_ids:
+        return False
+    # backward compatibility for old state files that only stored MsgID
+    if msg_id in processed_ids:
         return False
     text = (msg.get("Text") or "").strip()
     if not text:
@@ -291,10 +306,10 @@ def should_process_message(cfg: Dict[str, Any], msg: Dict[str, Any], state: Dict
 
 
 def mark_processed(state: Dict[str, Any], msg: Dict[str, Any]) -> None:
-    msg_id = msg.get("MsgID")
-    if not msg_id:
+    key = dedupe_key(msg)
+    if not key:
         return
-    state.setdefault("processed_ids", {})[msg_id] = iso_now_utc()
+    state.setdefault("processed_ids", {})[key] = iso_now_utc()
 
 
 def handle_signal(signum, frame):
