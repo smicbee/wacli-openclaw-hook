@@ -1,0 +1,28 @@
+{
+  "wacli_bin": "wacli",
+  "openclaw_bin": "openclaw",
+  "poll_interval_seconds": 45,
+  "sync_timeout_seconds": 120,
+  "openclaw_timeout_seconds": 120,
+  "lookback_minutes_on_boot": 15,
+  "state_file": "~/.wacli-hook/state.json",
+  "dry_run": true,
+  "allow_groups": false,
+  "allow_chats": [],
+  "deny_chats": [],
+  "trigger": {
+    "mode": "prefix",
+    "prefixes": ["!claw", "@clawdia"],
+    "keywords": ["clawdia", "openclaw"],
+    "regex": []
+  },
+  "reply": {
+    "session_strategy": "per_chat",
+    "global_session_id": "wacli-hook-global",
+    "thinking": "minimal",
+    "system_preamble": "Du antwortest als lockerer, hilfreicher Assistent in einem WhatsApp-Chat. Antworte knapp, natürlich und auf Deutsch. Keine Meta-Erklärungen."
+  },
+  "dedupe": {
+    "processed_id_ttl_hours": 168
+  }
+}
