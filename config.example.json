@@ -12,15 +12,15 @@
   "deny_chats": [],
   "trigger": {
     "mode": "prefix",
-    "prefixes": ["!claw", "@clawdia"],
-    "keywords": ["clawdia", "openclaw"],
+    "prefixes": ["!bot"],
+    "keywords": ["assistant", "openclaw"],
     "regex": []
   },
   "reply": {
     "session_strategy": "per_chat",
     "global_session_id": "wacli-hook-global",
     "thinking": "minimal",
-    "system_preamble": "Du antwortest als lockerer, hilfreicher Assistent in einem WhatsApp-Chat. Antworte knapp, natürlich und auf Deutsch. Keine Meta-Erklärungen."
+    "system_preamble": "You are a concise, helpful assistant in a WhatsApp chat. Reply naturally and avoid meta explanations."
   },
   "dedupe": {
     "processed_id_ttl_hours": 168

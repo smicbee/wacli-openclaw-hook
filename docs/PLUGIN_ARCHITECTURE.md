@@ -50,7 +50,7 @@ Supported trigger modes:
 - `regex`: one of configured regex patterns matches
 
 Recommended production default:
-- `prefix` (e.g. `!claw`) to reduce accidental auto-replies.
+- `prefix` (e.g. `!bot`) to reduce accidental auto-replies.
 
 ---
 

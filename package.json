@@ -1,5 +1,5 @@
 {
-  "name": "@smicbee/wacli-hook",
+  "name": "openclaw-wacli-hook",
   "version": "0.1.0",
   "description": "OpenClaw plugin + Python runner for wacli incoming-message automation",
   "type": "module",

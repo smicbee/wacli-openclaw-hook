@@ -1,67 +1,87 @@
 # wacli-openclaw-hook
 
-Automates WhatsApp message handling by combining:
+`wacli-openclaw-hook` is a neutral automation plugin/runner that connects incoming WhatsApp messages (via `wacli`) with OpenClaw agent replies.
 
-- `wacli` for sync + send
-- `openclaw agent` for generated replies
-- a lightweight OpenClaw plugin wrapper for lifecycle/status tooling
+It is designed for controlled auto-reply workflows with explicit trigger rules, deduplication, and dry-run safety.
 
 ---
 
-## Repository contents
+## What this project does
 
-- `wacli_hook.py` — main orchestration runner
-- `config.example.json` — starter config
-- `index.ts` — OpenClaw plugin entry (`wacli-hook`)
-- `openclaw.plugin.json` — plugin manifest + schema
-- `package.json` — package metadata for plugin publishing
-- `docs/PLUGIN_ARCHITECTURE.md` — detailed architecture
-- `docs/RELEASE_PLAN.md` — release checklist and rollout plan
+The runner executes a serialized loop:
 
----
+1. sync messages from WhatsApp (`wacli sync --once`)
+2. fetch new messages since the last watermark
+3. apply trigger and chat filters
+4. generate a response using `openclaw agent`
+5. send the response using `wacli send text`
+6. persist state for dedupe and restart safety
 
-## How it works
-
-The runner executes a serial loop:
-
-1. `wacli sync --once --json`
-2. fetch new messages (`wacli messages list --after ...`)
-3. trigger/filter evaluation
-4. call `openclaw agent --session-id ... --json`
-5. send reply via `wacli send text`
-6. persist state (watermark + dedupe)
-
-This avoids `wacli` store-lock issues seen with parallel `sync --follow` + `send` usage.
+This avoids common lock conflicts from running long-lived `wacli sync --follow` in parallel with separate send commands.
 
 ---
 
-## Quickstart
+## Repository structure
+
+- `wacli_hook.py` — Python orchestration runner
+- `config.example.json` — sample runtime configuration
+- `index.ts` — OpenClaw plugin entry
+- `openclaw.plugin.json` — plugin manifest and config schema
+- `package.json` — package metadata
+- `docs/PLUGIN_ARCHITECTURE.md` — architecture reference
+- `docs/RELEASE_PLAN.md` — release checklist
+
+---
+
+## Prerequisites
+
+- Node.js 22+
+- Python 3.10+
+- `wacli` installed and authenticated (`wacli auth` completed)
+- OpenClaw installed and reachable from CLI (`openclaw status`)
+
+---
+
+## Installation (local checkout)
 
 ```bash
-cd /home/smicbee/repos/wacli-openclaw-hook
+git clone <your-repo-url>
+cd wacli-openclaw-hook
 cp config.example.json config.json
+```
+
+Optional sanity check:
+
+```bash
+python3 -m py_compile wacli_hook.py
 python3 wacli_hook.py --config ./config.json --once
 ```
 
-Default is `dry_run=true`, so nothing is sent.
+By default, `dry_run` is `true`, so no outbound messages are sent.
 
-When validated:
+---
+
+## Running the runner directly
+
+Single cycle:
 
 ```bash
-# set "dry_run": false in config.json
+python3 wacli_hook.py --config ./config.json --once
+```
+
+Continuous mode:
+
+```bash
 python3 wacli_hook.py --config ./config.json
 ```
 
 ---
 
-## Plugin usage
+## Using it as an OpenClaw plugin
 
-The repo also ships an OpenClaw plugin entry (`wacli-hook`) that can manage the runner as a service and expose helper tools:
+The plugin entry (`index.ts`) can run the Python runner as a managed background service.
 
-- `wacli_hook_status`
-- `wacli_hook_run_once`
-
-Example plugin config (in OpenClaw config):
+Example OpenClaw config snippet:
 
 ```json
 {
@@ -73,8 +93,8 @@ Example plugin config (in OpenClaw config):
           "enabled": true,
           "autoStart": true,
           "pythonBin": "python3",
-          "scriptPath": "/home/smicbee/repos/wacli-openclaw-hook/wacli_hook.py",
-          "configPath": "/home/smicbee/repos/wacli-openclaw-hook/config.json"
+          "scriptPath": "./wacli_hook.py",
+          "configPath": "./config.json"
         }
       }
     }
@@ -82,19 +102,32 @@ Example plugin config (in OpenClaw config):
 }
 ```
 
+Plugin helper tools:
+
+- `wacli_hook_status`
+- `wacli_hook_run_once`
+
 ---
 
 ## Recommended production defaults
 
-- trigger mode: `prefix`
-- prefixes: `!claw` (or explicit mention pattern)
-- `allow_groups=false` unless explicitly needed
-- strict allowlist for auto-reply chats
+- `trigger.mode = "prefix"`
+- use explicit prefixes (for example: `!bot`)
+- keep `allow_groups = false` unless required
+- use `allow_chats` for strict scope control
+- keep `dry_run = true` until end-to-end validation is complete
 
 ---
 
-## Notes
+## Security and operational notes
 
-- Requires `wacli`, `openclaw`, and `python3` on PATH.
 - `config.json` is intentionally git-ignored.
-- Start with dry-run and move to live replies only after end-to-end validation.
+- Do not commit private chat identifiers or credentials.
+- Start with restricted triggers and chat allowlists.
+- Add rate limits/cooldowns before broad deployment.
+
+---
+
+## License
+
+MIT (see `LICENSE`).
