@@ -1,0 +1,33 @@
+{
+  "name": "@smicbee/wacli-hook",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin + Python runner for wacli incoming-message automation",
+  "type": "module",
+  "files": [
+    "index.ts",
+    "openclaw.plugin.json",
+    "wacli_hook.py",
+    "config.example.json",
+    "README.md",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.24"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  }
+}

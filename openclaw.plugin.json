@@ -1,0 +1,19 @@
+{
+  "id": "wacli-hook",
+  "name": "wacli Hook",
+  "description": "Runs the wacli->OpenClaw auto-reply hook script as a managed plugin service",
+  "contracts": {
+    "tools": ["wacli_hook_status", "wacli_hook_run_once"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean", "default": true },
+      "autoStart": { "type": "boolean", "default": true },
+      "pythonBin": { "type": "string", "default": "python3" },
+      "scriptPath": { "type": "string", "default": "./wacli_hook.py" },
+      "configPath": { "type": "string", "default": "./config.json" }
+    }
+  }
+}

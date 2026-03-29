@@ -1,23 +1,41 @@
 # wacli-openclaw-hook
 
-Kleiner Runner, der eingehende WhatsApp-Nachrichten über `wacli` erkennt und bei Triggern automatisch `openclaw agent` aufruft, um Antworten zu generieren.
+Automates WhatsApp message handling by combining:
 
-## Was das Script macht
+- `wacli` for sync + send
+- `openclaw agent` for generated replies
+- a lightweight OpenClaw plugin wrapper for lifecycle/status tooling
 
-1. Führt regelmäßig `wacli sync --once` aus (kein dauerhaftes `--follow`, damit kein Store-Lock blockiert).
-2. Liest neue Nachrichten via `wacli messages list --after ... --json`.
-3. Filtert nach konfigurierbaren Regeln (Chat, DM/Group, Trigger).
-4. Ruft `openclaw agent --session-id ... --json` auf.
-5. Sendet Antwort per `wacli send text --to <chatJID>`.
-6. Speichert State (`last_check_iso`, `processed_ids`) für Dedupe.
+---
 
-## Voraussetzungen
+## Repository contents
 
-- `wacli` ist eingerichtet (`wacli auth` bereits gelaufen)
-- `openclaw` CLI ist installiert und gegen laufendes Gateway nutzbar
-- Python 3.10+
+- `wacli_hook.py` — main orchestration runner
+- `config.example.json` — starter config
+- `index.ts` — OpenClaw plugin entry (`wacli-hook`)
+- `openclaw.plugin.json` — plugin manifest + schema
+- `package.json` — package metadata for plugin publishing
+- `docs/PLUGIN_ARCHITECTURE.md` — detailed architecture
+- `docs/RELEASE_PLAN.md` — release checklist and rollout plan
 
-## Schnellstart
+---
+
+## How it works
+
+The runner executes a serial loop:
+
+1. `wacli sync --once --json`
+2. fetch new messages (`wacli messages list --after ...`)
+3. trigger/filter evaluation
+4. call `openclaw agent --session-id ... --json`
+5. send reply via `wacli send text`
+6. persist state (watermark + dedupe)
+
+This avoids `wacli` store-lock issues seen with parallel `sync --follow` + `send` usage.
+
+---
+
+## Quickstart
 
 ```bash
 cd /home/smicbee/repos/wacli-openclaw-hook
@@ -25,67 +43,58 @@ cp config.example.json config.json
 python3 wacli_hook.py --config ./config.json --once
 ```
 
-Standardmäßig läuft es mit `dry_run=true` (es wird **nicht** gesendet).
+Default is `dry_run=true`, so nothing is sent.
 
-Wenn die Logs passen:
+When validated:
 
 ```bash
-# config.json: "dry_run": false setzen
+# set "dry_run": false in config.json
 python3 wacli_hook.py --config ./config.json
 ```
 
-## Wichtige Config-Felder
+---
 
-- `dry_run`: true = nur simulieren, false = wirklich senden
-- `allow_groups`: Gruppen erlauben (default false)
-- `allow_chats`: wenn gesetzt, nur diese ChatJIDs erlauben
-- `trigger.mode`: `any` | `prefix` | `keyword` | `regex`
-- `reply.session_strategy`: `per_chat` oder `global`
-- `reply.thinking`: Thinking-Level für `openclaw agent`
+## Plugin usage
 
-## Beispiel: nur auf Prefix `!claw` in DMs reagieren
+The repo also ships an OpenClaw plugin entry (`wacli-hook`) that can manage the runner as a service and expose helper tools:
+
+- `wacli_hook_status`
+- `wacli_hook_run_once`
+
+Example plugin config (in OpenClaw config):
 
 ```json
 {
-  "dry_run": false,
-  "allow_groups": false,
-  "trigger": {
-    "mode": "prefix",
-    "prefixes": ["!claw"]
+  "plugins": {
+    "entries": {
+      "wacli-hook": {
+        "enabled": true,
+        "config": {
+          "enabled": true,
+          "autoStart": true,
+          "pythonBin": "python3",
+          "scriptPath": "/home/smicbee/repos/wacli-openclaw-hook/wacli_hook.py",
+          "configPath": "/home/smicbee/repos/wacli-openclaw-hook/config.json"
+        }
+      }
+    }
   }
 }
 ```
 
-## Betrieb als Systemd User Service (optional)
+---
 
-`~/.config/systemd/user/wacli-hook.service`:
+## Recommended production defaults
 
-```ini
-[Unit]
-Description=wacli -> OpenClaw hook runner
-After=default.target
+- trigger mode: `prefix`
+- prefixes: `!claw` (or explicit mention pattern)
+- `allow_groups=false` unless explicitly needed
+- strict allowlist for auto-reply chats
 
-[Service]
-Type=simple
-WorkingDirectory=/home/smicbee/repos/wacli-openclaw-hook
-ExecStart=/usr/bin/python3 /home/smicbee/repos/wacli-openclaw-hook/wacli_hook.py --config /home/smicbee/repos/wacli-openclaw-hook/config.json
-Restart=always
-RestartSec=5
+---
 
-[Install]
-WantedBy=default.target
-```
+## Notes
 
-Aktivieren:
-
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now wacli-hook.service
-journalctl --user -u wacli-hook.service -f
-```
-
-## Hinweise
-
-- Während ein `sync --follow` läuft, blockiert `wacli` den Store. Dieses Script nutzt daher bewusst `sync --once` pro Zyklus.
-- Für Sicherheit zuerst immer mit `dry_run=true` testen.
-- Trigger und Allowlist streng halten, damit nichts ungeplant antwortet.
+- Requires `wacli`, `openclaw`, and `python3` on PATH.
+- `config.json` is intentionally git-ignored.
+- Start with dry-run and move to live replies only after end-to-end validation.
